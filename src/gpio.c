@@ -113,13 +113,12 @@ int gpio_read(char pin, bool *value) {
     char path[40];
     sprintf(path, "/sys/class/gpio/gpio%d/value", pin);
     int fd = open(path, O_RDONLY);
-    if (!fd)
+    if (fd < 0)
         HAL_ERROR("gpio", "Unable to read from GPIO pin %d!\n", pin);
 
     char val = 0;
     lseek(fd, 0, SEEK_SET);
-    read(fd, &val, 0);
-    if (!val) {
+    if (read(fd, &val, 1) != 1) {
         close(fd);
         HAL_ERROR("gpio", "Unable to read from GPIO pin %d!\n", pin);
     }
