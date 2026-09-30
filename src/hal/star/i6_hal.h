@@ -46,11 +46,11 @@ int i6_raw_get(hal_rawframe *frame);
 int i6_raw_release(hal_rawframe *frame);
 void i6_raw_destroy(void);
 
-int i6_region_create(char handle, hal_rect rect, short opacity);
+int i6_region_create(char handle, hal_rect rect, short opacity, short room);
 void i6_region_deinit(void);
 void i6_region_destroy(char handle);
 void i6_region_init(void);
-int i6_region_prepare(char handle, short width, short height);
+int i6_region_prepare(char handle, short width, short height, short room);
 int i6_region_setbitmap(int handle, hal_bitmap *bitmap);
 
 int i6_isp_gain(unsigned int *gain);
