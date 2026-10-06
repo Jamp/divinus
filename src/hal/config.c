@@ -105,9 +105,21 @@ enum ConfigError parse_param_value_n(
 
     if (res >= 2 && (param_value[0] == '"' || param_value[0] == '\'') &&
         param_value[res - 1] == param_value[0]) {
+        char quote = param_value[0];
         memmove(param_value, param_value + 1, res - 2);
         param_value[res - 2] = '\0';
         res -= 2;
+        // YAML doubles a single quote inside a single-quoted value
+        if (quote == '\'') {
+            char *out = param_value;
+            for (char *in = param_value; *in; in++, out++) {
+                *out = *in;
+                if (in[0] == '\'' && in[1] == '\'')
+                    in++;
+            }
+            *out = '\0';
+            res = out - param_value;
+        }
     }
 
     while (res > 0 && alt_isspace(param_value[res - 1]))

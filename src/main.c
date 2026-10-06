@@ -147,9 +147,6 @@ int main(int argc, char *argv[]) {
     if (app_config.watchdog)
         watchdog_stop();
 
-    if (!graceful)
-        app_config_restore();
-
     if (graceful) {
         fprintf(stderr, "Restarting...\n");
         execvp(argv[0], argv);

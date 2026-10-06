@@ -39,32 +39,16 @@ static inline void app_config_open(FILE **file, const char *flags) {
     }
 }
 
-void app_config_restore(void) {
-    char conf_path[PATH_MAX], exe_path[PATH_MAX];
-
-    ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
-    if (exe_len != -1) {
-        char bak_path[PATH_MAX], *dir = dirname(exe_path);
-        exe_path[exe_len] = '\0';
-        snprintf(conf_path, sizeof(conf_path), "%s/divinus.yaml", dir);
-        sprintf(bak_path, "%s.bak", conf_path);
-        if (!access(bak_path, F_OK)) {
-            remove(conf_path);
-            rename(bak_path, conf_path);
-            return;
-        }
+// Single-quoted, so that values such as a time format starting with '%' are
+// still valid YAML for the other tools reading this file
+static void save_string(FILE *file, const char *key, const char *value) {
+    fprintf(file, "%s: '", key);
+    for (; *value; value++) {
+        if (*value == '\'')
+            fputc('\'', file);
+        fputc(*value, file);
     }
-
-    const char **path = appconf_paths;
-    while (*path) {
-        char bak_path[PATH_MAX];
-        sprintf(bak_path, "%s.bak", *path);
-        if (!access(bak_path, F_OK)) {
-            remove(*path);
-            rename(bak_path, *path);
-        }
-        path++;
-    }
+    fputs("'\n", file);
 }
 
 int app_config_save(void) {
@@ -75,7 +59,7 @@ int app_config_save(void) {
         HAL_ERROR("app_config", "Can't open config file for writing\n");
 
     fprintf(file, "system:\n");
-    fprintf(file, "  sensor_config: %s\n", app_config.sensor_config);
+    save_string(file, "  sensor_config", app_config.sensor_config);
     fprintf(file, "  web_port: %d\n", app_config.web_port);
     if (!EMPTY(*app_config.web_whitelist)) {
         fprintf(file, "  web_whitelist:\n");
@@ -84,14 +68,14 @@ int app_config_save(void) {
         }
     }
     fprintf(file, "  web_enable_auth: %s\n", app_config.web_enable_auth ? "true" : "false");
-    fprintf(file, "  web_auth_user: %s\n", app_config.web_auth_user);
-    fprintf(file, "  web_auth_pass: %s\n", app_config.web_auth_pass);
+    save_string(file, "  web_auth_user", app_config.web_auth_user);
+    save_string(file, "  web_auth_pass", app_config.web_auth_pass);
     fprintf(file, "  web_auth_skiplocal: %s\n", app_config.web_auth_skiplocal ? "true" : "false");
     fprintf(file, "  web_enable_static: %s\n", app_config.web_enable_static ? "true" : "false");
     fprintf(file, "  isp_thread_stack_size: %d\n", app_config.isp_thread_stack_size);
     fprintf(file, "  venc_stream_thread_stack_size: %d\n", app_config.venc_stream_thread_stack_size);
     fprintf(file, "  web_server_thread_stack_size: %d\n", app_config.web_server_thread_stack_size);
-    fprintf(file, "  time_format: %s\n", timefmt);
+    save_string(file, "  time_format", timefmt);
     fprintf(file, "  watchdog: %d\n", app_config.watchdog);
 
     fprintf(file, "night_mode:\n");
@@ -102,7 +86,7 @@ int app_config_save(void) {
     fprintf(file, "  ir_cut_pin2: %d\n", app_config.ir_cut_pin2);
     fprintf(file, "  ir_led_pin: %d\n", app_config.ir_led_pin);
     fprintf(file, "  pin_switch_delay_us: %d\n", app_config.pin_switch_delay_us);
-    fprintf(file, "  adc_device: %s\n", app_config.adc_device);
+    save_string(file, "  adc_device", app_config.adc_device);
     fprintf(file, "  adc_threshold: %d\n", app_config.adc_threshold);
     fprintf(file, "  night_gain: %d\n", app_config.night_gain);
     fprintf(file, "  day_gain: %d\n", app_config.day_gain);
@@ -125,22 +109,22 @@ int app_config_save(void) {
     fprintf(file, "onvif:\n");
     fprintf(file, "  enable: %s\n", app_config.onvif_enable ? "true" : "false");
     fprintf(file, "  enable_auth: %s\n", app_config.onvif_enable_auth ? "true" : "false");
-    fprintf(file, "  auth_user: %s\n", app_config.onvif_auth_user);
-    fprintf(file, "  auth_pass: %s\n", app_config.onvif_auth_pass);
+    save_string(file, "  auth_user", app_config.onvif_auth_user);
+    save_string(file, "  auth_pass", app_config.onvif_auth_pass);
 
     fprintf(file, "rtsp:\n");
     fprintf(file, "  enable: %s\n", app_config.rtsp_enable ? "true" : "false");
     fprintf(file, "  port: %d\n", app_config.rtsp_port);
-    fprintf(file, "  audio_codec: %s\n", app_config.rtsp_audio_codec);
+    save_string(file, "  audio_codec", app_config.rtsp_audio_codec);
     fprintf(file, "  enable_auth: %s\n", app_config.rtsp_enable_auth ? "true" : "false");
-    fprintf(file, "  auth_user: %s\n", app_config.rtsp_auth_user);
-    fprintf(file, "  auth_pass: %s\n", app_config.rtsp_auth_pass);
+    save_string(file, "  auth_user", app_config.rtsp_auth_user);
+    save_string(file, "  auth_pass", app_config.rtsp_auth_pass);
 
     fprintf(file, "record:\n");
     fprintf(file, "  enable: %s\n", app_config.record_enable ? "true" : "false");
     fprintf(file, "  continuous: %s\n", app_config.record_continuous ? "true" : "false");
-    fprintf(file, "  path: %s\n", app_config.record_path);
-    fprintf(file, "  filename: %s\n", app_config.record_filename);
+    save_string(file, "  path", app_config.record_path);
+    save_string(file, "  filename", app_config.record_filename);
     fprintf(file, "  segment_duration: %d\n", app_config.record_segment_duration);
     fprintf(file, "  segment_size: %d\n", app_config.record_segment_size);
 
@@ -178,19 +162,25 @@ int app_config_save(void) {
         char textEmpty = EMPTY(osds[i].text);
         if (imgEmpty && textEmpty) continue;
 
-        if (!imgEmpty)
-            fprintf(file, "    reg%d_img: %s\n", i, osds[i].img);
-        if (!textEmpty)
-            fprintf(file, "    reg%d_text: %s\n", i, osds[i].text);
-        fprintf(file, "    reg%d_font: %s\n", i, osds[i].font);
-        fprintf(file, "    reg%d_opal: %d\n", i, osds[i].opal);
-        fprintf(file, "    reg%d_posx: %d\n", i, osds[i].posx);
-        fprintf(file, "    reg%d_posy: %d\n", i, osds[i].posy);
-        fprintf(file, "    reg%d_size: %.1f\n", i, osds[i].size);
-        fprintf(file, "    reg%d_color: %#04x\n", i, osds[i].color);
-        fprintf(file, "    reg%d_outl: %#04x\n", i, osds[i].outl);
-        fprintf(file, "    reg%d_bgcolor: %#04x\n", i, osds[i].bgcolor);
-        fprintf(file, "    reg%d_thick: %.1f\n", i, osds[i].thick);
+        char key[16];
+        if (!imgEmpty) {
+            sprintf(key, "  reg%d_img", i);
+            save_string(file, key, osds[i].img);
+        }
+        if (!textEmpty) {
+            sprintf(key, "  reg%d_text", i);
+            save_string(file, key, osds[i].text);
+        }
+        sprintf(key, "  reg%d_font", i);
+        save_string(file, key, osds[i].font);
+        fprintf(file, "  reg%d_opal: %d\n", i, osds[i].opal);
+        fprintf(file, "  reg%d_posx: %d\n", i, osds[i].posx);
+        fprintf(file, "  reg%d_posy: %d\n", i, osds[i].posy);
+        fprintf(file, "  reg%d_size: %.1f\n", i, osds[i].size);
+        fprintf(file, "  reg%d_color: %#04x\n", i, osds[i].color);
+        fprintf(file, "  reg%d_outl: %#04x\n", i, osds[i].outl);
+        fprintf(file, "  reg%d_bgcolor: %#04x\n", i, osds[i].bgcolor);
+        fprintf(file, "  reg%d_thick: %.1f\n", i, osds[i].thick);
     }
 
     fprintf(file, "jpeg:\n");
@@ -210,10 +200,10 @@ int app_config_save(void) {
 
     fprintf(file, "http_post:\n");
     fprintf(file, "  enable: %s\n", app_config.http_post_enable ? "true" : "false");
-    fprintf(file, "  host: %s\n", app_config.http_post_host);
-    fprintf(file, "  url: %s\n", app_config.http_post_url);
-    fprintf(file, "  login: %s\n", app_config.http_post_login);
-    fprintf(file, "  password: %s\n", app_config.http_post_password);
+    save_string(file, "  host", app_config.http_post_host);
+    save_string(file, "  url", app_config.http_post_url);
+    save_string(file, "  login", app_config.http_post_login);
+    save_string(file, "  password", app_config.http_post_password);
     fprintf(file, "  width: %d\n", app_config.http_post_width);
     fprintf(file, "  height: %d\n", app_config.http_post_height);
     fprintf(file, "  interval: %d\n", app_config.http_post_interval);
