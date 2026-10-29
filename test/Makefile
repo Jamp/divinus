@@ -1,5 +1,6 @@
 CFLAGS = -std=gnu99 -Wall -Wno-parentheses -I../src \
-	-DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC -Dmmap64=mmap
+	-DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC -Dmmap64=mmap \
+	-DRTSP_TX_BUDGET='(1024 * 1024)'
 TESTS = rtsp_con_test rtp_nal_test
 
 all: $(TESTS)
