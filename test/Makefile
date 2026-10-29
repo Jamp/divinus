@@ -8,8 +8,9 @@ all: $(TESTS)
 clean:
 	rm -f $(TESTS)
 
-# rtsp.c is included by the test to reach its static functions
-rtsp_con_test: rtsp_con_test.c ../src/rtsp/mime.c ../src/hal/tools.c ../src/rtsp/rtsp.c $(wildcard ../src/rtsp/*.h)
+# rtsp.c is included by the test to reach its static functions; rtp.c drives
+# frames through the connections it sets up
+rtsp_con_test: rtsp_con_test.c ../src/rtsp/mime.c ../src/hal/tools.c ../src/rtsp/rtp.c ../src/rtsp/rtsp.c $(wildcard ../src/rtsp/*.h)
 	$(CC) $(CFLAGS) $(filter-out ../src/rtsp/rtsp.c %.h,$^) -lpthread -o $@
 
 # rtp.c likewise, linked against the rest of the RTSP server
