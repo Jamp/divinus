@@ -1,6 +1,6 @@
 CFLAGS = -std=gnu99 -Wall -Wno-parentheses -I../src \
 	-DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC -Dmmap64=mmap
-TESTS = soap_test onvif_event_test motion_core_test rtsp_con_test rtp_nal_test network_test
+TESTS = soap_test onvif_event_test motion_core_test rtsp_con_test rtp_nal_test network_test log_test
 
 all: $(TESTS)
 	@for t in $(TESTS); do ./$$t || exit 1; done
@@ -27,5 +27,8 @@ rtp_nal_test: rtp_nal_test.c ../src/rtsp/mime.c ../src/hal/tools.c ../src/rtsp/r
 
 network_test: network_test.c ../src/network.c ../src/hal/tools.c
 	$(CC) $(CFLAGS) $^ -lpthread -o $@
+
+log_test: log_test.c
+	$(CC) $(CFLAGS) $^ -o $@
 
 .PHONY: all clean
