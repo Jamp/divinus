@@ -38,10 +38,10 @@ int main(void) {
 
     CHECK(!network_collect(&lo, &info));
 
-    build_list("192.168.31.52");
+    build_list("192.168.1.100");
     CHECK(network_collect(&lo, &info));
     CHECK(info.count == 1);
-    CHECK(!strcmp(info.ipaddr[0], "192.168.31.52"));
+    CHECK(!strcmp(info.ipaddr[0], "192.168.1.100"));
 
     CHECK(network_collect(NULL, &info));
     CHECK(info.count == 0);
