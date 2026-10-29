@@ -25,6 +25,7 @@ static int counted_close(int fd)
 #include "check.h"
 #undef CHECK
 #include "../src/rtsp/rtsp.c"
+#include "../src/rtsp/rtp.h"
 #undef CHECK
 #define CHECK(cond) \
     do { \
@@ -454,6 +455,288 @@ static void test_request_body_skipped(void)
     close(peer);
 }
 
+#define FRAME_NAL 12000
+#define FRAME_NAL_MAX 160000
+
+/* rtp_send_h26x reads the quit flag through the thread pool */
+static void attach_thread_pool(rtsp_handle h)
+{
+    h->pool = calloc(1, sizeof(*h->pool));
+    h->pool->sharedp = calloc(1, sizeof(*h->pool->sharedp));
+    h->pool->sharedp->gbl = gbl_create();
+}
+
+static int play_tcp_client(rtsp_handle h, struct connection_item_t **con)
+{
+    char reply[1024];
+    int peer = connect_client(h, con);
+
+    send_str(peer, "SETUP rtsp://cam/track=0 RTSP/1.0\r\nCSeq: 1\r\n"
+        "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+    serve_once(h);
+    send_str(peer, "PLAY rtsp://cam/ RTSP/1.0\r\nCSeq: 2\r\n\r\n");
+    serve_once(h);
+    usleep(10 * 1000);
+    if (read(peer, reply, sizeof(reply)) <= 0) return -1;
+    return peer;
+}
+
+/* Frame n is one H.264 NAL stamped with (n + 1) seconds, so the receiver can
+ * tell frames apart by their RTP timestamp */
+static void send_sized_frame(rtsp_handle h, int n, int idr, unsigned int size)
+{
+    static unsigned char nal[4 + FRAME_NAL_MAX];
+    hal_vidpack pack = { .data = nal, .length = 4 + size,
+        .timestamp = (unsigned long long)(n + 1) * 1000000 };
+    hal_vidstream stream = { .pack = &pack, .count = 1 };
+
+    memset(nal, 0x55, sizeof(nal));
+    nal[0] = nal[1] = nal[2] = 0;
+    nal[3] = 1;
+    nal[4] = idr ? 0x65 : 0x41;
+    rtp_send_h26x(h, &stream, 0);
+}
+
+static void send_frame(rtsp_handle h, int n, int idr)
+{
+    send_sized_frame(h, n, idr, FRAME_NAL);
+}
+
+struct rtp_reader_t {
+    int fd, stop;
+    unsigned char buf[2048];
+    size_t have;
+    int frames[256], types[256], count;
+    int markers;
+    int seen, last_seq, seq_gaps;
+};
+
+/* Parses interleaved packets, recording each video frame start and marker */
+static void reader_feed(struct rtp_reader_t *r)
+{
+    for (;;) {
+        ssize_t got = read(r->fd, r->buf + r->have, sizeof(r->buf) - r->have);
+        if (got <= 0) return;
+        r->have += got;
+        while (r->have >= 4) {
+            size_t len = r->buf[2] << 8 | r->buf[3];
+            if (r->have < 4 + len) break;
+            unsigned char *rtp = r->buf + 4;
+            if (r->buf[0] == '$' && r->buf[1] == 0 && len > 14) {
+                unsigned int ts = rtp[4] << 24 | rtp[5] << 16 | rtp[6] << 8 | rtp[7];
+                int type = rtp[12] & 0x1F, start = 1;
+                if (type == 28) {
+                    start = rtp[13] & 0x80;
+                    type = rtp[13] & 0x1F;
+                }
+                if (start && r->count < 256) {
+                    r->frames[r->count] = ts / 90000 - 1;
+                    r->types[r->count++] = type;
+                }
+                if (rtp[1] & 0x80) r->markers++;
+                int seq = rtp[2] << 8 | rtp[3];
+                if (r->seen && seq != ((r->last_seq + 1) & 0xFFFF)) r->seq_gaps++;
+                r->seen = 1;
+                r->last_seq = seq;
+            }
+            memmove(r->buf, r->buf + 4 + len, r->have - 4 - len);
+            r->have -= 4 + len;
+        }
+    }
+}
+
+static void *reader_thread(void *v)
+{
+    struct rtp_reader_t *r = v;
+    while (!__atomic_load_n(&r->stop, __ATOMIC_SEQ_CST)) {
+        struct pollfd pfd = { .fd = r->fd, .events = POLLIN };
+        if (poll(&pfd, 1, 50) == 1) reader_feed(r);
+    }
+    reader_feed(r);
+    return NULL;
+}
+
+/* Lets the server see every peer gone, so the queues go back to the budget */
+static void release_clients(rtsp_handle h)
+{
+    for (int i = 0; i < 10 && h->con_list.list; i++) serve_once(h);
+}
+
+static void stall_sender(struct connection_item_t *con)
+{
+    int size = 4096;
+    setsockopt(con->client_fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
+}
+
+/* A client that stops reading must not hold up the encoder thread */
+static void test_stalled_reader_does_not_block(void)
+{
+    rtsp_handle h = make_server(1);
+    struct connection_item_t *con = NULL;
+    int peer;
+
+    attach_thread_pool(h);
+    peer = play_tcp_client(h, &con);
+    CHECK(peer >= 0 && con);
+    stall_sender(con);
+
+    unsigned long long start = millis();
+    for (int i = 0; i < 200; i++) send_frame(h, i, i % 30 == 0);
+    CHECK(millis() - start < 1000);
+    close(peer);
+    release_clients(h);
+}
+
+/* The reading client gets every frame whole while the other one is stalled */
+static void test_reader_unaffected_by_stalled_one(void)
+{
+    rtsp_handle h = make_server(2);
+    struct connection_item_t *stalled = NULL, *reading = NULL;
+    struct rtp_reader_t reader = {};
+    pthread_t thread;
+    int stalled_peer;
+
+    attach_thread_pool(h);
+    stalled_peer = play_tcp_client(h, &stalled);
+    reader.fd = play_tcp_client(h, &reading);
+    CHECK(stalled_peer >= 0 && reader.fd >= 0);
+    stall_sender(stalled);
+    fcntl(reader.fd, F_SETFL, fcntl(reader.fd, F_GETFL) | O_NONBLOCK);
+    pthread_create(&thread, NULL, reader_thread, &reader);
+
+    for (int i = 0; i < 200; i++) {
+        send_frame(h, i, i % 30 == 0);
+        usleep(2000);
+    }
+    usleep(200 * 1000);
+    __atomic_store_n(&reader.stop, 1, __ATOMIC_SEQ_CST);
+    pthread_join(thread, NULL);
+
+    CHECK(reader.markers == 200);
+    CHECK(reader.count == 200);
+    close(stalled_peer);
+    close(reader.fd);
+    release_clients(h);
+}
+
+/* A client that falls behind resumes on a keyframe, never mid-GOP */
+static void test_stalled_reader_resumes_on_idr(void)
+{
+    rtsp_handle h = make_server(1);
+    struct connection_item_t *con = NULL;
+    struct rtp_reader_t reader = {};
+    pthread_t thread;
+    int i, gaps = 0;
+
+    attach_thread_pool(h);
+    reader.fd = play_tcp_client(h, &con);
+    CHECK(reader.fd >= 0 && con);
+    stall_sender(con);
+    fcntl(reader.fd, F_SETFL, fcntl(reader.fd, F_GETFL) | O_NONBLOCK);
+
+    /* stalled for longer than the largest queue holds */
+    for (i = 0; i < 100; i++) send_frame(h, i, i == 0);
+    /* back to reading, with a kernel buffer like the cameras' */
+    int size = 160 * 1024;
+    setsockopt(con->client_fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
+    pthread_create(&thread, NULL, reader_thread, &reader);
+    for (; i < 160; i++) {
+        send_frame(h, i, i % 20 == 0);
+        usleep(5000);
+    }
+    usleep(200 * 1000);
+    __atomic_store_n(&reader.stop, 1, __ATOMIC_SEQ_CST);
+    pthread_join(thread, NULL);
+
+    /* frame 0 went out before the stall; after it, every gap ends on a keyframe */
+    CHECK(reader.count >= 2 && reader.frames[0] == 0);
+    for (i = 1; i < reader.count; i++) {
+        if (reader.frames[i] == reader.frames[i - 1] + 1) continue;
+        gaps++;
+        CHECK(reader.types[i] == 5);
+    }
+    CHECK(gaps > 0);
+    close(reader.fd);
+    release_clients(h);
+}
+
+/* A reader that pauses for 1.5 s, as measured on the cameras' clients, then
+ * catches up loses nothing: 9 KB frames at 20 fps, a 160 KB keyframe every 40 */
+static void test_paused_reader_loses_nothing(void)
+{
+    rtsp_handle h = make_server(1);
+    struct connection_item_t *con = NULL;
+    struct rtp_reader_t reader = {};
+    pthread_t thread;
+    int i;
+
+    attach_thread_pool(h);
+    reader.fd = play_tcp_client(h, &con);
+    CHECK(reader.fd >= 0 && con);
+    /* about what the kernel holds for a client on the cameras */
+    int size = 64 * 1024;
+    setsockopt(con->client_fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
+    fcntl(reader.fd, F_SETFL, fcntl(reader.fd, F_GETFL) | O_NONBLOCK);
+
+    for (i = 0; i < 100; i++) {
+        if (i == 30) pthread_create(&thread, NULL, reader_thread, &reader);
+        send_sized_frame(h, i, i % 40 == 0, i % 40 ? 9000 : FRAME_NAL_MAX);
+        usleep(50 * 1000);
+    }
+    usleep(300 * 1000);
+    __atomic_store_n(&reader.stop, 1, __ATOMIC_SEQ_CST);
+    pthread_join(thread, NULL);
+
+    CHECK(reader.markers == 100);
+    CHECK(reader.count == 100);
+    CHECK(reader.seq_gaps == 0);
+    for (i = 1; i < reader.count; i++)
+        CHECK(reader.frames[i] == reader.frames[i - 1] + 1);
+    close(reader.fd);
+    release_clients(h);
+}
+
+/* Clients that stop reading together cannot take more queue memory than the
+ * budget, and the one still reading keeps getting every frame */
+static void test_stalled_clients_within_budget(void)
+{
+    enum { STALLED = 4 };
+    rtsp_handle h = make_server(STALLED + 1);
+    struct connection_item_t *stalled[STALLED], *reading = NULL;
+    struct rtp_reader_t reader = {};
+    pthread_t thread;
+    int peers[STALLED], over = 0;
+
+    attach_thread_pool(h);
+    for (int i = 0; i < STALLED; i++) {
+        peers[i] = play_tcp_client(h, &stalled[i]);
+        CHECK(peers[i] >= 0);
+        stall_sender(stalled[i]);
+    }
+    reader.fd = play_tcp_client(h, &reading);
+    CHECK(reader.fd >= 0);
+    fcntl(reader.fd, F_SETFL, fcntl(reader.fd, F_GETFL) | O_NONBLOCK);
+    pthread_create(&thread, NULL, reader_thread, &reader);
+
+    for (int n = 0; n < 150; n++) {
+        send_frame(h, n, n % 40 == 0);
+        unsigned int total = reading->tx_cap;
+        for (int i = 0; i < STALLED; i++) total += stalled[i]->tx_cap;
+        if (total > RTSP_TX_BUDGET) over++;
+        usleep(2000);
+    }
+    usleep(200 * 1000);
+    __atomic_store_n(&reader.stop, 1, __ATOMIC_SEQ_CST);
+    pthread_join(thread, NULL);
+
+    CHECK(over == 0);
+    CHECK(reader.markers == 150);
+    CHECK(reader.count == 150);
+    for (int i = 0; i < STALLED; i++) close(peers[i]);
+    close(reader.fd);
+    release_clients(h);
+}
+
 int main(void)
 {
     signal(SIGPIPE, SIG_IGN);
@@ -467,5 +750,10 @@ int main(void)
     test_connection_overflow();
     test_get_parameter_keepalive();
     test_request_body_skipped();
+    test_stalled_reader_does_not_block();
+    test_reader_unaffected_by_stalled_one();
+    test_stalled_reader_resumes_on_idr();
+    test_paused_reader_loses_nothing();
+    test_stalled_clients_within_budget();
     CHECK_DONE();
 }

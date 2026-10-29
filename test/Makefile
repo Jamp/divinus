@@ -1,5 +1,6 @@
 CFLAGS = -std=gnu99 -Wall -Wno-parentheses -I../src \
-	-DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC -Dmmap64=mmap
+	-DCLOCK_MONOTONIC_COARSE=CLOCK_MONOTONIC -Dmmap64=mmap \
+	-DRTSP_TX_BUDGET='(1024 * 1024)'
 TESTS = soap_test onvif_event_test motion_core_test rtsp_con_test rtp_nal_test network_test log_test
 
 all: $(TESTS)
@@ -17,8 +18,9 @@ onvif_event_test: onvif_event_test.c ../src/onvif_event.c
 motion_core_test: motion_core_test.c ../src/motion_core.c
 	$(CC) $(CFLAGS) $^ -o $@
 
-# rtsp.c is included by the test to reach its static functions
-rtsp_con_test: rtsp_con_test.c ../src/rtsp/mime.c ../src/hal/tools.c ../src/rtsp/rtsp.c $(wildcard ../src/rtsp/*.h)
+# rtsp.c is included by the test to reach its static functions; rtp.c drives
+# frames through the connections it sets up
+rtsp_con_test: rtsp_con_test.c ../src/rtsp/mime.c ../src/hal/tools.c ../src/rtsp/rtp.c ../src/rtsp/rtsp.c $(wildcard ../src/rtsp/*.h)
 	$(CC) $(CFLAGS) $(filter-out ../src/rtsp/rtsp.c %.h,$^) -lpthread -o $@
 
 # rtp.c likewise, linked against the rest of the RTSP server
