@@ -43,6 +43,7 @@ Software motion detection, published as ONVIF `tns1:VideoSource/MotionAlarm` eve
 - **enable**: Boolean to activate motion detection (default: `false`).
 - **sensitivity**: From 1 (only large movements) to 10 (small movements) (default: `5`).
 - **hold_s**: Seconds without movement before the motion state goes back to false (default: `5`).
+- **night_threshold**: Pixel difference that counts as a change while night mode is on, 0 keeps the one from sensitivity (default: `0`).
 
 ## ISP section
 

@@ -33,6 +33,10 @@ void motion_core_tune(motion_core *core, int sensitivity, int holdFrames) {
     core->holdFrames = holdFrames;
 }
 
+void motion_core_threshold(motion_core *core, int threshold) {
+    core->threshold = threshold;
+}
+
 void motion_core_pause(motion_core *core, int frames) {
     core->settle = frames;
 }

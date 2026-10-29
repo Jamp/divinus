@@ -1,4 +1,5 @@
 #include "motion.h"
+#include "night.h"
 
 #define MOTION_WIDTH 320
 #define MOTION_HEIGHT 180
@@ -25,8 +26,8 @@ static void motion_report(int change) {
 static void *motion_thread(void) {
     motion_core core;
     hal_rawframe frame;
-    int missed = 0;
-    bool stalled = false;
+    int missed = 0, dayThreshold;
+    bool stalled = false, night = false;
 
     if (motion_core_init(&core, MOTION_WIDTH, MOTION_HEIGHT)) {
         HAL_DANGER("motion", "Can't allocate the detector!\n");
@@ -34,6 +35,7 @@ static void *motion_thread(void) {
     }
     motion_core_tune(&core, app_config.motion_detect_sensitivity,
         app_config.motion_detect_hold_s * MOTION_FPS);
+    dayThreshold = core.threshold;
 
     while (keepRunning && motionOn) {
         usleep(1000000 / MOTION_FPS);
@@ -44,6 +46,14 @@ static void *motion_thread(void) {
             pauseFrames = 0;
         }
         pthread_mutex_unlock(&pauseMtx);
+
+        if (night != night_mode_on()) {
+            night = !night;
+            int threshold = night && app_config.motion_detect_night_threshold ?
+                app_config.motion_detect_night_threshold : dayThreshold;
+            motion_core_threshold(&core, threshold);
+            HAL_INFO("motion", "Pixel threshold %d\n", threshold);
+        }
 
         if (raw_get(&frame)) {
             if (++missed < MOTION_STALL_S * MOTION_FPS) continue;

@@ -123,6 +123,7 @@ int app_config_save(void) {
     fprintf(file, "  enable: %s\n", app_config.motion_detect_enable ? "true" : "false");
     fprintf(file, "  sensitivity: %d\n", app_config.motion_detect_sensitivity);
     fprintf(file, "  hold_s: %d\n", app_config.motion_detect_hold_s);
+    fprintf(file, "  night_threshold: %d\n", app_config.motion_detect_night_threshold);
 
     fprintf(file, "isp:\n");
     fprintf(file, "  mirror: %s\n", app_config.mirror ? "true" : "false");
@@ -308,6 +309,7 @@ enum ConfigError app_config_parse(void) {
     app_config.motion_detect_enable = false;
     app_config.motion_detect_sensitivity = 5;
     app_config.motion_detect_hold_s = 5;
+    app_config.motion_detect_night_threshold = 0;
 
     struct IniConfig ini;
     memset(&ini, 0, sizeof(struct IniConfig));
@@ -438,6 +440,8 @@ enum ConfigError app_config_parse(void) {
             &app_config.motion_detect_sensitivity);
         parse_int(&ini, "motion_detect", "hold_s", 1, 300,
             &app_config.motion_detect_hold_s);
+        parse_int(&ini, "motion_detect", "night_threshold", 0, 255,
+            &app_config.motion_detect_night_threshold);
     }
 
     err = parse_bool(&ini, "isp", "mirror", &app_config.mirror);

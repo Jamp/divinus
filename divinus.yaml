@@ -70,6 +70,7 @@ motion_detect:
   enable: false
   sensitivity: 5
   hold_s: 5
+  night_threshold: 0
 
 http_post:
   enable: false

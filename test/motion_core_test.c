@@ -96,6 +96,21 @@ int main(void) {
     CHECK(motion_core_reset(&core) == true);
     CHECK(motion_core_reset(&core) == false);
 
+    // A faint change counts only with the lower night threshold
+    for (int threshold = 0; threshold < 3; threshold++) {
+        if (threshold == 1) motion_core_threshold(&core, 13);
+        if (threshold == 2) motion_core_threshold(&core, 25);
+        motion_core_reset(&core);
+        events = 0;
+        for (int i = 0; i < 10; i++) {
+            fill(80);
+            square(16 + i * 16, 48, 64, 100);
+            square(16 + i * 16, 80, 64, 100);
+            events += motion_core_feed(&core, frame, STRIDE) == MOTION_START;
+        }
+        CHECK(events == (threshold == 1));
+    }
+
     motion_core_free(&core);
     CHECK_DONE();
 }

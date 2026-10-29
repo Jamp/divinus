@@ -46,6 +46,7 @@ struct AppConfig {
     bool motion_detect_enable;
     int motion_detect_sensitivity;
     int motion_detect_hold_s;
+    int motion_detect_night_threshold;
 
     // [isp]
     bool mirror;
