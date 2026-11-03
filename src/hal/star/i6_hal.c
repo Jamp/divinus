@@ -996,6 +996,42 @@ unbind:
     return ret;
 }
 
+// On SSC32x a frame that does not fit at the end of the output ring is
+// continued at its start and handed out as several packs, which may cut a NAL
+// in two; join them so consumers always see whole NALs
+static bool i6_video_join(i6_venc_strm *stream, i6_venc_pack *joined) {
+    static unsigned char *buffer;
+    static unsigned int capacity;
+    unsigned int total = 0;
+
+    for (int j = 0; j < stream->count; j++)
+        total += stream->packet[j].length - stream->packet[j].offset;
+    if (total > capacity) {
+        unsigned char *grown = realloc(buffer, total);
+        if (!grown) {
+            HAL_DANGER("i6_venc", "Joining a %u-byte frame failed!\n", total);
+            return false;
+        }
+        buffer = grown;
+        capacity = total;
+    }
+
+    unsigned int at = 0;
+    for (int j = 0; j < stream->count; j++) {
+        i6_venc_pack *pack = &stream->packet[j];
+        memcpy(buffer + at, pack->data + pack->offset, pack->length - pack->offset);
+        at += pack->length - pack->offset;
+    }
+    *joined = stream->packet[0];
+    joined->data = buffer;
+    joined->length = total;
+    joined->offset = 0;
+    joined->endFrame = stream->packet[stream->count - 1].endFrame;
+    HAL_INFO("i6_venc", "Joined %d packs of frame %u (%u bytes)\n",
+        stream->count, stream->sequence, total);
+    return true;
+}
+
 void *i6_video_thread(void)
 {
     int ret, maxFd = 0;
@@ -1075,12 +1111,20 @@ void *i6_video_thread(void)
                     }
 
                     if (i6_vid_cb) {
+                        i6_venc_pack *packets = stream.packet, joinedPack;
+                        int packCount = stream.count;
+                        if (series == 0xEF && stream.count > 1 &&
+                            i6_video_join(&stream, &joinedPack)) {
+                            packets = &joinedPack;
+                            packCount = 1;
+                        }
+
                         hal_vidstream outStrm;
-                        hal_vidpack outPack[stream.count];
-                        outStrm.count = stream.count;
+                        hal_vidpack outPack[packCount];
+                        outStrm.count = packCount;
                         outStrm.seq = stream.sequence;
-                        for (int j = 0; j < stream.count; j++) {
-                            i6_venc_pack *pack = &stream.packet[j];
+                        for (int j = 0; j < packCount; j++) {
+                            i6_venc_pack *pack = &packets[j];
                             outPack[j].data = pack->data;
                             outPack[j].length = pack->length;
                             outPack[j].naluCnt = pack->packNum;
@@ -1088,24 +1132,24 @@ void *i6_video_thread(void)
                                 unsigned int n = 0;
                                 unsigned int sc, scanOff = 0;
                                 unsigned int pktLen = pack->length;
-                                while (n < 8 &&
+                                while (n < 7 &&
                                        (sc = nal_find_startcode(outPack[j].data,
                                             scanOff, pktLen)) < pktLen) {
                                     unsigned int scLen = (outPack[j].data[sc + 2] == 1) ? 3 : 4;
-                                    outPack[0].nalu[n].type =
+                                    outPack[j].nalu[n].type =
                                         i6_state[i].payload == HAL_VIDCODEC_H264
                                         ? (outPack[j].data[sc + scLen] & 0x1F)
                                         : ((outPack[j].data[sc + scLen] & 0x7E) >> 1);
-                                    outPack[0].nalu[n].offset = sc;
+                                    outPack[j].nalu[n].offset = sc;
                                     n++;
                                     scanOff = sc + scLen;
                                 }
-                                outPack[0].naluCnt = n;
-                                outPack[0].nalu[n].offset = pktLen;
-                                for (n = 0; n < outPack[0].naluCnt; n++)
-                                    outPack[0].nalu[n].length =
-                                        outPack[0].nalu[n + 1].offset -
-                                        outPack[0].nalu[n].offset;
+                                outPack[j].naluCnt = n;
+                                outPack[j].nalu[n].offset = pktLen;
+                                for (n = 0; n < outPack[j].naluCnt; n++)
+                                    outPack[j].nalu[n].length =
+                                        outPack[j].nalu[n + 1].offset -
+                                        outPack[j].nalu[n].offset;
                             } else switch (i6_state[i].payload) {
                                 case HAL_VIDCODEC_H264:
                                     for (char k = 0; k < outPack[j].naluCnt; k++) {
