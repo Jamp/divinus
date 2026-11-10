@@ -131,11 +131,11 @@ struct connection_item_t {
     struct list_t list_entry;
 };
 #define RTSP_TX_MIN (64 * 1024)
-#define RTSP_TX_MAX (1024 * 1024)
+#define RTSP_TX_MAX (3 * 1024 * 1024)
 /* What all client queues may hold together: clients that open sessions and
  * stop reading must not run the camera out of memory */
 #ifndef RTSP_TX_BUDGET
-#define RTSP_TX_BUDGET (3 * 1024 * 1024)
+#define RTSP_TX_BUDGET (4 * 1024 * 1024)
 #endif
 
 extern unsigned int rtsp_tx_reserved;
